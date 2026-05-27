@@ -71,6 +71,9 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+          echo "OCI CLI output:"
+          echo "$OCI_OUTPUT"
+
           if echo "$OCI_OUTPUT" | grep -q '"lifecycle-state": "PROVISIONING"'; then
             echo "VM is being created. Disable the workflow after confirming success."
             exit 0
