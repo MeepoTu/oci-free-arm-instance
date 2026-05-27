@@ -87,6 +87,7 @@ jobs:
         uses: sarisia/actions-status-discord@v1.15.4
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ack_no_webhook: true
           color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
           title: OCI Bot Status
           description: |
