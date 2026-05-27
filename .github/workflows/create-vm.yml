@@ -1,0 +1,99 @@
+name: Try to Create OCI VM
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+env:
+  SUPPRESS_LABEL_WARNING: true
+  OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+  OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
+  OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+  AD_NAME: ${{ secrets.AD_NAME }}
+  IMAGE_ID: ${{ secrets.IMAGE_ID }}
+  INSTANCE_NAME: coolify-vm
+  BOOT_VOLUME_SIZE_GB: "200"
+  SHAPE_CONFIG: '{"ocpus":4,"memoryInGBs":24}'
+
+jobs:
+  create-vm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache OCI CLI packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: ${{ runner.os }}-pip-oci-cli-v1
+
+      - name: Add OCI CLI to path
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Setup OCI CLI and try to create VM
+        id: create_vm
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+
+          pip install oci-cli
+
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "${{ secrets.OCI_CLI_KEY_CONTENT }}" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_CLI_USER }}
+          tenancy=${{ secrets.OCI_CLI_TENANCY }}
+          fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}
+          key_file=$HOME/.oci/oci_api_key.pem
+          region=${OCI_CLI_REGION}
+          EOF
+
+          printf '%s\n' "${{ secrets.SSH_PUBLIC_KEY }}" > "$HOME/my_ssh_key.pub"
+
+          OCI_OUTPUT=$(oci compute instance launch \
+            --compartment-id "$OCI_COMPARTMENT_ID" \
+            --availability-domain "$AD_NAME" \
+            --shape "VM.Standard.A1.Flex" \
+            --shape-config "$SHAPE_CONFIG" \
+            --subnet-id "$OCI_SUBNET_ID" \
+            --image-id "$IMAGE_ID" \
+            --ssh-authorized-keys-file "$HOME/my_ssh_key.pub" \
+            --assign-public-ip true \
+            --display-name "$INSTANCE_NAME" \
+            --boot-volume-size-in-gbs "$BOOT_VOLUME_SIZE_GB" 2>&1 || true)
+
+          {
+            echo "log_data<<EOF"
+            echo "$OCI_OUTPUT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if echo "$OCI_OUTPUT" | grep -q '"lifecycle-state": "PROVISIONING"'; then
+            echo "VM is being created. Disable the workflow after confirming success."
+            exit 0
+          elif echo "$OCI_OUTPUT" | grep -q 'Out of host capacity'; then
+            echo "Oracle returned Out of host capacity. The workflow will retry on the next schedule."
+            exit 0
+          else
+            echo "Unexpected OCI error."
+            exit 1
+          fi
+
+      - name: Send Discord notification
+        if: always()
+        uses: sarisia/actions-status-discord@v1.15.4
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
+          title: OCI Bot Status
+          description: |
+            **Result:**
+            ${{ contains(steps.create_vm.outputs.log_data, 'Out of host capacity') && 'Waiting for capacity...' || contains(steps.create_vm.outputs.log_data, 'PROVISIONING') && 'VM created. Disable workflow.' || 'Error' }}
+
+            **Details:**
+            ```json
+            ${{ steps.create_vm.outputs.log_data }}
+            ```
