@@ -8,8 +8,13 @@ on:
 env:
   SUPPRESS_LABEL_WARNING: true
   OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+  DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
   OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
   OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+  OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+  OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+  OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+  SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
   AD_NAME: ${{ secrets.AD_NAME }}
   IMAGE_ID: ${{ secrets.IMAGE_ID }}
   INSTANCE_NAME: coolify-vm
@@ -36,6 +41,23 @@ jobs:
         run: |
           set -o pipefail
 
+          missing=0
+          for name in OCI_CLI_REGION OCI_COMPARTMENT_ID OCI_SUBNET_ID OCI_CLI_USER OCI_CLI_TENANCY OCI_CLI_FINGERPRINT SSH_PUBLIC_KEY AD_NAME IMAGE_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret or environment value: $name"
+              missing=1
+            fi
+          done
+
+          if [[ -n "$OCI_SUBNET_ID" && "$OCI_SUBNET_ID" != ocid1.subnet* ]]; then
+            echo "::error::OCI_SUBNET_ID must start with ocid1.subnet. Do not use a VCN OCID."
+            missing=1
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
           pip install oci-cli
 
           mkdir -p "$HOME/.oci"
@@ -44,14 +66,19 @@ jobs:
 
           cat > "$HOME/.oci/config" <<EOF
           [DEFAULT]
-          user=${{ secrets.OCI_CLI_USER }}
-          tenancy=${{ secrets.OCI_CLI_TENANCY }}
-          fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}
+          user=${OCI_CLI_USER}
+          tenancy=${OCI_CLI_TENANCY}
+          fingerprint=${OCI_CLI_FINGERPRINT}
           key_file=$HOME/.oci/oci_api_key.pem
           region=${OCI_CLI_REGION}
           EOF
 
-          printf '%s\n' "${{ secrets.SSH_PUBLIC_KEY }}" > "$HOME/my_ssh_key.pub"
+          if [ ! -s "$HOME/.oci/oci_api_key.pem" ]; then
+            echo "::error::Missing required secret or empty value: OCI_CLI_KEY_CONTENT"
+            exit 1
+          fi
+
+          printf '%s\n' "$SSH_PUBLIC_KEY" > "$HOME/my_ssh_key.pub"
 
           OCI_OUTPUT=$(oci compute instance launch \
             --compartment-id "$OCI_COMPARTMENT_ID" \
@@ -86,11 +113,10 @@ jobs:
           fi
 
       - name: Send Discord notification
-        if: always()
+        if: ${{ always() && env.DISCORD_WEBHOOK_URL != '' }}
         uses: sarisia/actions-status-discord@v1.15.4
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          ack_no_webhook: true
+          webhook: ${{ env.DISCORD_WEBHOOK_URL }}
           color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
           title: OCI Bot Status
           description: |
