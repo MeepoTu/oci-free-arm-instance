@@ -72,11 +72,21 @@ jobs:
           key_file=$HOME/.oci/oci_api_key.pem
           region=${OCI_CLI_REGION}
           EOF
+          chmod 600 "$HOME/.oci/config"
 
           if [ ! -s "$HOME/.oci/oci_api_key.pem" ]; then
             echo "::error::Missing required secret or empty value: OCI_CLI_KEY_CONTENT"
             exit 1
           fi
+
+          case "$SSH_PUBLIC_KEY" in
+            ssh-rsa\ *|ssh-ed25519\ *|ecdsa-sha2-nistp256\ *|ecdsa-sha2-nistp384\ *|ecdsa-sha2-nistp521\ *)
+              ;;
+            *)
+              echo "::error::SSH_PUBLIC_KEY must be the public key content, not a file path. Use: cat ~/.ssh/oracle.pub"
+              exit 1
+              ;;
+          esac
 
           printf '%s\n' "$SSH_PUBLIC_KEY" > "$HOME/my_ssh_key.pub"
 
