@@ -48,12 +48,21 @@ require_env \
 INSTANCE_NAME="${INSTANCE_NAME:-coolify-vm}"
 BOOT_VOLUME_SIZE_GB="${BOOT_VOLUME_SIZE_GB:-200}"
 SHAPE="${SHAPE:-VM.Standard.A1.Flex}"
-SHAPE_CONFIG="${SHAPE_CONFIG:-{\"ocpus\":4,\"memoryInGBs\":24}}"
+OCPUS="${OCPUS:-4}"
+MEMORY_IN_GBS="${MEMORY_IN_GBS:-24}"
+if [ -z "${SHAPE_CONFIG:-}" ]; then
+  SHAPE_CONFIG="$(printf '{"ocpus":%s,"memoryInGBs":%s}' "$OCPUS" "$MEMORY_IN_GBS")"
+fi
 OCI_CONFIG_FILE="${OCI_CONFIG_FILE:-$HOME/.oci/config}"
 
 case "$OCI_SUBNET_ID" in
   ocid1.subnet*) ;;
   *) fail "OCI_SUBNET_ID must start with ocid1.subnet. Do not use a VCN OCID." ;;
+esac
+
+case "$SHAPE_CONFIG" in
+  *'"ocpus"'*'"memoryInGBs"'*) ;;
+  *) fail "SHAPE_CONFIG must be valid JSON. Prefer OCPUS=$OCPUS and MEMORY_IN_GBS=$MEMORY_IN_GBS instead of setting SHAPE_CONFIG directly." ;;
 esac
 
 [ -s "$OCI_CLI_KEY_FILE" ] || fail "OCI_CLI_KEY_FILE does not exist or is empty: $OCI_CLI_KEY_FILE"
